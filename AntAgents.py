@@ -8,8 +8,9 @@ import numpy as np
 import random
 
 import tensorflow as tf
-from keras.models import Sequential
-from keras.layers import Dense, Activation
+from keras.models import Sequential, Model
+from keras.layers import Dense, Activation, Input
+from keras.layers.merge import Add, Multiply
 from keras.optimizers import Adam
 
 class MLAgent():
@@ -107,7 +108,7 @@ class DenseAgent(MLAgent):
         # append the experience to memory
         self.memory.append((state,action,reward,next_state,done))
 
-    def train_model():
+    def trainModel():
         """
         Trains our model based on experiences
         """
@@ -166,44 +167,153 @@ class A2CAgent(MLAgent):
     def __init__(self, alpha, gamma, epsilon, env):
         super().__init__(alpha, gamma, epsilon, env)
 
-        self.actor_alpha = self.alpha
-        self.critic_alpha = self.alpha
-        self.memory = []
-        # get the networks that describe the actor: mean and variance of actions
-        self.mu, self.var= self.buildActor()
-        # get the network that describes the critic: value of states
-        self.critic = self.buildCritic()
+        self.sess = sess # session to use for training
+        self.memory = [] # array to hold experiences for training
+
+        # placeholder to hold the combined gradient of the actor and critic
+        # networks for training of the actor network
+        self.actor_critic_grad = tf.placeholder(tf.float32, [None, self.env.action_space.shape[0]])
+
+        # get the actor network and the actor target network
+        self.actor_state_input, self.actor = self.buildActor()
+        _, self.actor_target = self.buildActor
+
+        # get the actor model gradient for initializing optimizer and training
+        actor_weights = self.actor.trainable_weights
+        self.actor_grad = tf.gradients(self.actor.output, actor_weights, self.actor_critic_grad)
+
+        # initialize the optimizer for training
+        grads = zip(self.actor_grad, actor_model_weights)
+        self.optimize = tf.train.AdamOptimizer(self.alpha).apply_graidents(grads)
+
+        # get the critic network and the critic target network
+        self.critic_state_input, self.critic_action_input, self.critic = self.buildCritic()
+        _, _, self.critic_target = self.buildCritic()
+
+        # get the critic model gradient for first round training
+        self.critic_grad = tf.gradients(self.critic_model.output, self.critic_action_input)
+
+        # initialize for later gradient calculations
+        self.sess.run(tf.initialize_all_variables())
+
+    def getAction(self, state):
+        """
+        returns an action from the actor model given the state
+        """
+        return self.actor.predict(state)
 
     def buildActor(self):
         """
         defines the actor network
         """
+        state_input = Input(shape.self.env.observation_space.shape)
+        h1 = Dense(1200, activation='relu')(state_input)
+        h2 = Dense(1100, activation='relu')(h1)
+        h3 = Dense(100, activation='relu')(h2)
+        out = Dense(self.env.action_space.shape[0], activation='relu')(h3)
 
-        input_shape = [1,len(self.env.observation_space.low)]
-        output_shape = [1, len(self.env.action_space.low)]
+        model = Model(input=state_input, output=out)
+        adam = Adam(lr=self.alpha)
+        model.compile(loss='mse', optimizer=adam)
 
-        base = Sequential()
-        base.add(Dense(128, input_dim=input_shape, activation='relu'))
-
-        mu = Sequential()
-        mu.add(Dense(output_shape, activation='linear'))
-        mu.compile(loss='mse',
-                      optimizer=Adam(lr=self.actor_alpha))
-
-        var = Sequential()
-        var.add(Dense(output_shape, activation='linear'))
-        var.compile(loss='mse',
-                    optimizer=Adam(lr=self.actor_alpha))
-
-        return mu, var
-
+        return state_input, model
 
     def buildCritic(self):
         """
         defines the critic network
         """
-        input_shape = [1,len(self.env.observation_space.low)]
-        output_shape = [1, len(self.env.action_space.low)]
+        state_input = Input(shape=self.env.observation_space.shape)
+        state_h1 = Dense(1200, activation='relu')(state_input)
+        state_h2 = Dense(1100)(state_h1)
 
-        critic = Sequential()
-        critic.add(Dense)
+        action_input = Input(shape=self.env.action_space.shape)
+        action_h1    = Dense(1100)(action_input)
+
+        merged    = Add()([state_h2, action_h1])
+        merged_h1 = Dense(100, activation='relu')(merged)
+        output = Dense(1, activation='relu')(merged_h1)
+
+        model  = Model(input=[state_input,action_input], output=output)
+        adam  = Adam(lr=self.alpha)
+        model.compile(loss="mse", optimizer=adam)
+
+        return state_input, action_input, model
+
+    def trainModel(self):
+        """
+        trains our models using a batch of experiences from memories
+        """
+        batch_size = 32
+        if len(self.memory < batch_size):
+            # if we dont have enough experiences to train
+            return
+
+        # sample a batch of experiences randomly from memory
+        samples = np.random.choice(self.memory, batch_size)
+
+        # train the networks
+        self.trainCritic(samples)
+        self.trainActor(samples)
+        # after training update the target networks to match actor and critic
+        self.updateTarget()
+
+        # decay our epsilon value
+        self.epsilon = self.epsilon*.995
+
+    def trainActor(self, samples):
+        """
+        trains the actor network based on past experiences and the rewards recieved
+        and the gradient from training the critic
+        since network is in two parts: actor->critic use combined gradient
+        """
+        for sample in samples:
+            state, action, reward, next_state, done = sample
+            predicted_action = self.actor.predict(state)
+
+            # get the total combined gradient
+            a2c_grad = self.sess.run(self.critic_grad, feed_dict={
+                                    self.critic_state_input: state,
+                                    self.critic_action_input: predicted_action
+                                    })[0]
+            # train using the total combined gradient
+            self.sess.run(self.optimize, feed_dict{
+                                    self.actor_state_input: state,
+                                    self.actor_critic_grad: a2c_grad
+                                    })
+
+    def trainCritic(self, samples):
+        """
+        trains the critic network based on the difference between past experiences
+        and the outputs of the two target networks
+        """
+        for sample in samples:
+            state, action, reward, next_state, done = sample
+            if not done:
+                # get the predicted action from the state
+                target_action = self.actor_target.predict(next_state)
+                # get the predicted next value of the state action pair
+                target_reward = self.critic_target.predict([next_state,target_action][0][0])
+                # dicount reward using discount rate
+                reward = self.gamma*target_reward
+            # fit the critic network to the experience and estimated future reward
+            self.critic.fit([state, action], reward, verbose=0)
+
+    def updateTarget(self):
+        """
+        update the target networks after a training round has been completed
+        """
+        # update the critic target weights
+        critic_weights  = self.critic.get_weights()
+        critic_target_weights = self.critic_target.get_weights()
+
+        for i in range(len(critic_target_weights)):
+        	critic_target_weights[i] = critic_weights[i]
+        self.critic_target.set_weights(critic_target_weights)
+
+        # update the actor weights
+        actor_weights  = self.actor.get_weights()
+        actor_target_weights = self.target_critic.get_weights()
+
+        for i in range(len(actor_target_weights)):
+        	actor_target_weights[i] = actor_weights[i]
+        self.target_critic.set_weights(actor_target_weights)
