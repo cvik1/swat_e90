@@ -7,6 +7,11 @@ OpenAI Ant problem
 import numpy as np
 import random
 
+import tensorflow as tf
+from keras.models import Sequential
+from keras.layers import Dense, Activation
+from keras.optimizers import Adam
+
 class MLAgent():
     """
     This defines the generic class of a machine learning agent for the purposes
@@ -66,69 +71,139 @@ class DenseAgent(MLAgent):
     """
     def __init__(self, alpha, gamma, epsilon, env):
         # use the base class definition to initialize
-        super(DenseAgent, self).__init__(alpha, gamma, epsilon, env)
+        super().__init__(alpha, gamma, epsilon, env)
 
 
         self.memory = [] # array to hold experiences for training
         self.net = self.buildNetwork() # call build network to contruct our net
 
-    def getAction(self, state):
-        #TODO
-        raise NotImplementedError
+    def explore(self, state):
+        """
+        returns an action based on the epsilon greedy exploration policy
+        """
+        if np.random.rand() < self.epsilon:
+            # get random action for exploration
+            action = self.env.action_space.sample()
+        else:
+            # get action based on q values from network
+            action = self.getAction(state)
+        return action
 
-    def update(self, state, action, reward, next_state, done):
-        # adds the most recent experience to memory and formats it
-        # accordingly
-        raise NotImplementedError
+    def getAction(self,state):
+        """
+        returns an action based on the result from the neural network
+        """
+        input = tf.reshape(state, [1,-1])
+        q_values = self.model.predict(input, steps=1)
+        return np.argmax(q_values[0])
 
+    def remember(self, state, action, reward, next_state, done):
+        """
+        Adds training experiences to our memory
+        """
+        # make sure the states are the correct shape for training
+        state = tf.reshape(state, [1,-1])
+        next_state = tf.reshape(next_state, [1,-1])
+        # append the experience to memory
+        self.memory.append((state,action,reward,next_state,done))
 
-    def trainNet(self):
-        # trains the network using our memories
-        raise NotImplementedError
+    def train_model():
+        """
+        Trains our model based on experiences
+        """
+        x_batch = [] # array to hold our input batch
+        y_batch = [] # array to hold our ouput batch
+        # sample from memory to get experiences to use for training
+        if len(self.memory) > 64:
+            batch = random.sample(self.memory, 64)
+        else:
+            batch = self.memory
+        for state, action, reward, next_state, done in batch:
+            # create our target with appropriate reward and prediction
+            target = reward
+            if not done:
+                target = self.gamma * self.getAction(state)
+            y_target = self.model.predict(state)
+            y_target_f[0][action] = target
+
+            x_batch.append(state[0])
+            y_batch.append(y_target[0])
+
+        # now train model on x_batch and y_batch
+        self.model.fit(np.array(x_batch), np.array(y_batch), batch_size=(len(x_batch)), verbose=0)
+
+        # decay our value for epsilon
+        self.epsilon = self.epsilon * .995
+        # decau our value for gamma
+        self.gamma = self.gamma * .995
 
     def buildNetwork(self):
-        # builds the network
-        m = 1 # this is the number of past actions to consider for each action
-        input_shape = env.observation_space.shape[0] + m*env.action_space.shape[0]
+        """
+        defines the network
+        """
+        input_shape = env.observation_space.shape[0]
+        # the number of possible actions
         output_shape = 1
 
-        # this dictionary contains the layer sizes
-        sizes = {
-            'l1' = 1200
-            'l2' = 1100
-            'l3' = 100
-        }
-        # this dictionary contains the weight variable matrices
-        weights = {
-            'h1' = tf.Variable(tf.random_normal([input_shape, sizes['l1']]))
-            'h2' = tf.Variable(tf.random_normal([sizes['l1', sizes['l2']]]))
-            'h3' = tf.Variable(tf.random_normal([sizes['l2'], sizes['l3']]))
-            'out' = tf.Variable(tf.random_normal([sizes['l3'], output_shape]))
-        }
-        # this dictionary containts the bias variable vectors
-        bias = {
-            'b1' = tf.Variable(tf.random_normal([sizes['l1']]))
-            'b2' = tf.Variable(tf.random_normal([sizes['l2']]))
-            'b3' = tf.Varialbe(tf.random_normal([sizes['l3']]))
-            'out' = tf.Variable(tf.random_normal([output_shape]))
-        }
-        x = tf.placeholder("float", [None, input_shape])
-        y = tf.placeholder("float", [Nonem output_shape])
+        input_size = [1,len(self.env.observation_space.low)]
+        action_size = [1, self.env.action_space.n]
 
-        # now we actually build out model
+        model = Sequential()
+        model.add(Dense(1200, input_dim=input_shape, activation='relu'))
+        model.add(Dense(1100, activation='relu'))
+        model.add(Dense(100, activation='relu'))
+        model.add(Dense(output_shape, activation='linear'))
+        model.compile(loss='mse',
+                      optimizer=Adam(lr=self.alpha))
+        return model
 
-        # hidden layer one takes the input
-        hidden1 = tf.add(tf.matmul(x, weights['h1']), bias['b1'])
-        hidden1 = tf.nn.relu(hidden1) # relu activation
 
-        # hidden layer two takes output from hidden1
-        hidden2 = tf.add(tf.matmul(hidden1, weights['h2']), bias['b2'])
-        hidden2 = tf.nn.relu(hidden2) # relu activation
+class A2CAgent(MLAgent):
+    """
+    This agent will implement an asynchronous actor-critic network architecture
+    to solve the OpenAI Ant problem
+    """
+    def __init__(self, alpha, gamma, epsilon, env):
+        super().__init__(alpha, gamma, epsilon, env)
 
-        # hidden layer three takes output from hidden2, no activation
-        hidden3 = tf.add(tf.matmul(hidden2, weights['h3']), bias['b3'])
+        self.actor_alpha = self.alpha
+        self.critic_alpha = self.alpha
+        self.memory = []
+        # get the networks that describe the actor: mean and variance of actions
+        self.mu, self.var= self.buildActor()
+        # get the network that describes the critic: value of states
+        self.critic = self.buildCritic()
 
-        # y (output) takes output from hidden3, no activation
-        out = tf.add(tf.matmul(hidden3, weights['out']), bias['out'])
+    def buildActor(self):
+        """
+        defines the actor network
+        """
 
-        cost = tf.reduce_mean
+        input_shape = [1,len(self.env.observation_space.low)]
+        output_shape = [1, len(self.env.action_space.low)]
+
+        base = Sequential()
+        base.add(Dense(128, input_dim=input_shape, activation='relu'))
+
+        mu = Sequential()
+        mu.add(Dense(output_shape, activation='linear'))
+        mu.compile(loss='mse',
+                      optimizer=Adam(lr=self.actor_alpha))
+
+        var = Sequential()
+        var.add(Dense(output_shape, activation='linear'))
+        var.compile(loss='mse',
+                    optimizer=Adam(lr=self.actor_alpha))
+
+        return mu, var
+
+
+    def buildCritic(self):
+        """
+        defines the critic network
+        """
+        input_shape = [1,len(self.env.observation_space.low)]
+        output_shape = [1, len(self.env.action_space.low)]
+
+        critic = Sequential()
+        critic.add(Dense)
