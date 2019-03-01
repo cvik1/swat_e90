@@ -12,6 +12,7 @@ from keras.models import Sequential, Model
 from keras.layers import Dense, Activation, Input
 from keras.layers.merge import Add, Multiply
 from keras.optimizers import Adam
+from keras import backend
 
 class MLAgent():
     """
@@ -167,7 +168,8 @@ class A2CAgent(MLAgent):
     def __init__(self, alpha, gamma, epsilon, env):
         super().__init__(alpha, gamma, epsilon, env)
 
-        self.sess = sess # session to use for training
+        self.sess = tf.Session() # session to use for training
+        backend.set_session(self.sess)
         self.memory = [] # array to hold experiences for training
 
         # placeholder to hold the combined gradient of the actor and critic
@@ -176,37 +178,58 @@ class A2CAgent(MLAgent):
 
         # get the actor network and the actor target network
         self.actor_state_input, self.actor = self.buildActor()
-        _, self.actor_target = self.buildActor
+        _, self.actor_target = self.buildActor()
 
         # get the actor model gradient for initializing optimizer and training
         actor_weights = self.actor.trainable_weights
         self.actor_grad = tf.gradients(self.actor.output, actor_weights, self.actor_critic_grad)
 
         # initialize the optimizer for training
-        grads = zip(self.actor_grad, actor_model_weights)
-        self.optimize = tf.train.AdamOptimizer(self.alpha).apply_graidents(grads)
+        grads = zip(self.actor_grad, actor_weights)
+        self.optimize = tf.train.AdamOptimizer(self.alpha).apply_gradients(grads)
 
         # get the critic network and the critic target network
         self.critic_state_input, self.critic_action_input, self.critic = self.buildCritic()
         _, _, self.critic_target = self.buildCritic()
 
         # get the critic model gradient for first round training
-        self.critic_grad = tf.gradients(self.critic_model.output, self.critic_action_input)
+        self.critic_grad = tf.gradients(self.critic.output, self.critic_action_input)
 
         # initialize for later gradient calculations
-        self.sess.run(tf.initialize_all_variables())
+        self.sess.run(tf.global_variables_initializer())
+
+    def explore(self, state):
+        """
+        apply the epsilon greedy exploration policy
+        """
+        rand = np.random.sample()
+        if rand < self.epsilon:
+            # if less than epsilon return random action
+            return self.env.action_space.sample()
+        else:
+            # esle return greedy action
+            return self.getAction(state)
 
     def getAction(self, state):
         """
-        returns an action from the actor model given the state
+        greedily returns an action from the actor model given the state
         """
+        print(state)
+        print(state.shape)
         return self.actor.predict(state)
+
+    def remember(self, state, action, reward, next_state, done):
+        """
+        Adds training experiences to our memory
+        """
+        # append the experience to memory
+        self.memory.append((state,action,reward,next_state,done))
 
     def buildActor(self):
         """
         defines the actor network
         """
-        state_input = Input(shape.self.env.observation_space.shape)
+        state_input = Input(self.env.observation_space.shape)
         h1 = Dense(24, activation='relu')(state_input)
         h2 = Dense(48, activation='relu')(h1)
         h3 = Dense(24, activation='relu')(h2)
@@ -273,13 +296,11 @@ class A2CAgent(MLAgent):
             # get the total combined gradient
             a2c_grad = self.sess.run(self.critic_grad, feed_dict={
                                     self.critic_state_input: state,
-                                    self.critic_action_input: predicted_action
-                                    })[0]
+                                    self.critic_action_input: predicted_action})[0]
             # train using the total combined gradient
-            self.sess.run(self.optimize, feed_dict{
+            self.sess.run(self.optimize, feed_dict={
                                     self.actor_state_input: state,
-                                    self.actor_critic_grad: a2c_grad
-                                    })
+                                    self.actor_critic_grad: a2c_grad})
 
     def trainCritic(self, samples):
         """
