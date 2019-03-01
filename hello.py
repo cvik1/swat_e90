@@ -4,11 +4,11 @@ hello world demo for Professor Zucker
 """
 
 import gym
-import pybulletgym
+import roboschool
 
 def main():
 
-    env_name = "AntPyBulletEnv-v0"
+    env_name = "RoboschoolAnt-v1"
     env = gym.make(env_name)
 
     env.reset()
@@ -18,6 +18,8 @@ def main():
         state, reward, done, _ = env.step(action)
 
         env.render()
+        if done:
+            break
 
     print("Demo done!")
 

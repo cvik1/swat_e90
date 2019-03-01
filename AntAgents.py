@@ -207,9 +207,9 @@ class A2CAgent(MLAgent):
         defines the actor network
         """
         state_input = Input(shape.self.env.observation_space.shape)
-        h1 = Dense(1200, activation='relu')(state_input)
-        h2 = Dense(1100, activation='relu')(h1)
-        h3 = Dense(100, activation='relu')(h2)
+        h1 = Dense(24, activation='relu')(state_input)
+        h2 = Dense(48, activation='relu')(h1)
+        h3 = Dense(24, activation='relu')(h2)
         out = Dense(self.env.action_space.shape[0], activation='relu')(h3)
 
         model = Model(input=state_input, output=out)
@@ -223,14 +223,14 @@ class A2CAgent(MLAgent):
         defines the critic network
         """
         state_input = Input(shape=self.env.observation_space.shape)
-        state_h1 = Dense(1200, activation='relu')(state_input)
-        state_h2 = Dense(1100)(state_h1)
+        state_h1 = Dense(24, activation='relu')(state_input)
+        state_h2 = Dense(48)(state_h1)
 
         action_input = Input(shape=self.env.action_space.shape)
-        action_h1    = Dense(1100)(action_input)
+        action_h1 = Dense(48)(action_input)
 
         merged    = Add()([state_h2, action_h1])
-        merged_h1 = Dense(100, activation='relu')(merged)
+        merged_h1 = Dense(24, activation='relu')(merged)
         output = Dense(1, activation='relu')(merged_h1)
 
         model  = Model(input=[state_input,action_input], output=output)
