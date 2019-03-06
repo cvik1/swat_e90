@@ -6,6 +6,7 @@ OpenAI Ant problem
 
 import numpy as np
 import random
+from collections import deque
 
 import tensorflow as tf
 from keras.models import Sequential, Model
@@ -13,6 +14,7 @@ from keras.layers import Dense, Activation, Input
 from keras.layers.merge import Add, Multiply
 from keras.optimizers import Adam
 from keras import backend
+
 
 class MLAgent():
     """
@@ -170,7 +172,7 @@ class A2CAgent(MLAgent):
 
         self.sess = tf.Session() # session to use for training
         backend.set_session(self.sess)
-        self.memory = [] # array to hold experiences for training
+        self.memory = deque(maxlen=2000) # array to hold experiences for training
 
         # placeholder to hold the combined gradient of the actor and critic
         # networks for training of the actor network
@@ -197,33 +199,42 @@ class A2CAgent(MLAgent):
 
         # initialize for later gradient calculations
         self.sess.run(tf.global_variables_initializer())
+        #
+        # print("\n Actor: \n")
+        # print(self.actor.summary())
+        # print("\n Critic \n")
+        # print(self.critic.summary())
+
 
     def explore(self, state):
         """
         apply the epsilon greedy exploration policy
         """
+        # decay our epsilon value
+        self.epsilon = self.epsilon*.995
+        # get the action based on our epsilon-greedy exploration policy 
+
         rand = np.random.sample()
         if rand < self.epsilon:
             # if less than epsilon return random action
             return self.env.action_space.sample()
         else:
-            # esle return greedy action
+            # else return greedy action
             return self.getAction(state)
 
     def getAction(self, state):
         """
         greedily returns an action from the actor model given the state
         """
-        print(state)
-        print(state.shape)
-        return self.actor.predict(state)
+        action = self.actor.predict(state)
+        return action.reshape(-1,1)
 
     def remember(self, state, action, reward, next_state, done):
         """
         Adds training experiences to our memory
         """
         # append the experience to memory
-        self.memory.append((state,action,reward,next_state,done))
+        self.memory.append([state,action,reward,next_state,done])
 
     def buildActor(self):
         """
@@ -235,7 +246,7 @@ class A2CAgent(MLAgent):
         h3 = Dense(24, activation='relu')(h2)
         out = Dense(self.env.action_space.shape[0], activation='relu')(h3)
 
-        model = Model(input=state_input, output=out)
+        model = Model(inputs=state_input, outputs=out)
         adam = Adam(lr=self.alpha)
         model.compile(loss='mse', optimizer=adam)
 
@@ -256,7 +267,7 @@ class A2CAgent(MLAgent):
         merged_h1 = Dense(24, activation='relu')(merged)
         output = Dense(1, activation='relu')(merged_h1)
 
-        model  = Model(input=[state_input,action_input], output=output)
+        model  = Model(inputs=[state_input,action_input], outputs=output)
         adam  = Adam(lr=self.alpha)
         model.compile(loss="mse", optimizer=adam)
 
@@ -267,21 +278,18 @@ class A2CAgent(MLAgent):
         trains our models using a batch of experiences from memories
         """
         batch_size = 32
-        if len(self.memory < batch_size):
+        if len(self.memory) < batch_size:
             # if we dont have enough experiences to train
             return
 
         # sample a batch of experiences randomly from memory
-        samples = np.random.choice(self.memory, batch_size)
+        samples = random.sample(self.memory, batch_size)
 
         # train the networks
         self.trainCritic(samples)
         self.trainActor(samples)
         # after training update the target networks to match actor and critic
         self.updateTarget()
-
-        # decay our epsilon value
-        self.epsilon = self.epsilon*.995
 
     def trainActor(self, samples):
         """
@@ -309,15 +317,22 @@ class A2CAgent(MLAgent):
         """
         for sample in samples:
             state, action, reward, next_state, done = sample
+            # print("state.shape", state.shape)
+            # print("action.shape", action.shape)
+            # print("next_state.shape", next_state.shape)
+            # print(self.critic_action_input.shape)
+            # print(self.critic_state_input.shape)
+            # print(self.critic.output_shape)
             if not done:
                 # get the predicted action from the state
                 target_action = self.actor_target.predict(next_state)
                 # get the predicted next value of the state action pair
-                target_reward = self.critic_target.predict([next_state,target_action][0][0])
+                target_reward = self.critic_target.predict([next_state,target_action])[0][0]
                 # dicount reward using discount rate
-                reward = self.gamma*target_reward
+                reward += self.gamma*target_reward
             # fit the critic network to the experience and estimated future reward
-            self.critic.fit([state, action], reward, verbose=0)
+            self.critic.fit([state, action], [reward], verbose=0)
+
 
     def updateTarget(self):
         """
@@ -333,8 +348,8 @@ class A2CAgent(MLAgent):
 
         # update the actor weights
         actor_weights  = self.actor.get_weights()
-        actor_target_weights = self.target_critic.get_weights()
+        actor_target_weights = self.actor_target.get_weights()
 
         for i in range(len(actor_target_weights)):
         	actor_target_weights[i] = actor_weights[i]
-        self.target_critic.set_weights(actor_target_weights)
+        self.actor_target.set_weights(actor_target_weights)

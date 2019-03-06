@@ -28,10 +28,14 @@ def main():
     # number of episodes to train on
     training_episodes = 1000
 
+    print("Beginning training...\n")
+
     # train the agent
     for episode in range(training_episodes):
         # initialize environment variables
         state = env.reset()
+        # reshape the state array
+        state = state.reshape((1,env.observation_space.shape[0]))
         sum_reward = 0
         steps = 0
         done = False
@@ -39,9 +43,16 @@ def main():
         while not done:
             # get an action from the exploration policy
             action = agent.explore(state)
-            # apply the action to the env
-            next_state, reward, done, info = env.step(action)
 
+            # apply the action to the env
+            # we must reshape the action before stepping for compatability with
+            # rendering/recording the video
+            next_state, reward, done, info = env.step(action.reshape(1,-1)[0])
+
+            # reshape the action for input use in training
+            action = action.reshape((1, env.action_space.shape[0]))
+            # reshape the next_state array
+            next_state = next_state.reshape((1,env.observation_space.shape[0]))
             # add this experience to memory for training use later
             agent.remember(state, action, reward, next_state, done)
             # update the current state
@@ -57,8 +68,14 @@ def main():
         # train the model after every iteration
         agent.trainModel()
 
+
+    print("Rendering test...")
+
     # after training run a testing episode to see how we do
     state = env.reset()
+    # reshape the state array for passing into our model
+    state = state.reshape((1,env.observation_space.shape[0]))
+
     sum_reward = 0
     steps = 0
     done = False
@@ -67,12 +84,17 @@ def main():
         # get an action from the greedy policy
         action = agent.getAction(state)
         # apply the action to the env
-        next_state, reward, done, info = env.step(action)
+        # we must reshape action for rendering purposes
+        next_state, reward, done, info = env.step(action.reshape(1,-1)[0])
 
-        # add this experience to memory for training use later
-        agent.remember(state, action, reward, next_state, done)
-        # update the current state
+        # render so we can see the strategy learned by the agent
+        env.render()
+
+        # reshape the next_state array
+        next_state = next_state.reshape((1,env.observation_space.shape[0]))
+        # update state
         state = next_state
+
         # update the steps and sum reward for bookkeeping purposes
         steps +=1
         sum_reward += reward
