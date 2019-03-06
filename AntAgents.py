@@ -9,7 +9,7 @@ import random
 from collections import deque
 
 import tensorflow as tf
-from keras.models import Sequential, Model
+from keras.models import Sequential, Model, load_model
 from keras.layers import Dense, Activation, Input
 from keras.layers.merge import Add, Multiply
 from keras.optimizers import Adam
@@ -212,7 +212,7 @@ class A2CAgent(MLAgent):
         """
         # decay our epsilon value
         self.epsilon = self.epsilon*.995
-        # get the action based on our epsilon-greedy exploration policy 
+        # get the action based on our epsilon-greedy exploration policy
 
         rand = np.random.sample()
         if rand < self.epsilon:
@@ -240,14 +240,21 @@ class A2CAgent(MLAgent):
         """
         defines the actor network
         """
+        # this model takes as input the state and outputs an action to take
+
+        # takes observations from the env as input
         state_input = Input(self.env.observation_space.shape)
         h1 = Dense(24, activation='relu')(state_input)
         h2 = Dense(48, activation='relu')(h1)
         h3 = Dense(24, activation='relu')(h2)
         out = Dense(self.env.action_space.shape[0], activation='relu')(h3)
+        # outputs action for the env
 
+        # define keras Model using the tensorflow layer multiplication we did above
         model = Model(inputs=state_input, outputs=out)
+        # initialize optimizer with learning rate
         adam = Adam(lr=self.alpha)
+        # compile model
         model.compile(loss='mse', optimizer=adam)
 
         return state_input, model
@@ -256,19 +263,27 @@ class A2CAgent(MLAgent):
         """
         defines the critic network
         """
+        # this model takes two inputs, the current state and an action
+        # and outputs the expected reward of taking that action from that state
+
+        # input one is an observation from the env
         state_input = Input(shape=self.env.observation_space.shape)
         state_h1 = Dense(24, activation='relu')(state_input)
         state_h2 = Dense(48)(state_h1)
-
+        # input two is an action to take in the env
         action_input = Input(shape=self.env.action_space.shape)
         action_h1 = Dense(48)(action_input)
 
         merged    = Add()([state_h2, action_h1])
         merged_h1 = Dense(24, activation='relu')(merged)
         output = Dense(1, activation='relu')(merged_h1)
+        # output is a single value: the expected reward
 
+        # define keras model using the tf layers defined above
         model  = Model(inputs=[state_input,action_input], outputs=output)
+        # initialize optimizer with learning rate
         adam  = Adam(lr=self.alpha)
+        # compile the model to use
         model.compile(loss="mse", optimizer=adam)
 
         return state_input, action_input, model
@@ -333,7 +348,6 @@ class A2CAgent(MLAgent):
             # fit the critic network to the experience and estimated future reward
             self.critic.fit([state, action], [reward], verbose=0)
 
-
     def updateTarget(self):
         """
         update the target networks after a training round has been completed
@@ -353,3 +367,27 @@ class A2CAgent(MLAgent):
         for i in range(len(actor_target_weights)):
         	actor_target_weights[i] = actor_weights[i]
         self.actor_target.set_weights(actor_target_weights)
+
+    def saveWeights(self, actor_filename, critic_filename):
+        """
+        this function saves the weights from our model to be reloaded later
+        """
+        # save actor to file
+        self.actor.save(actor_filename)
+
+        # save critic to file
+        self.critic.save(critic_filename)
+
+    def loadWeights(self, actor_filename, critic_filename):
+        """
+        this function loads weights from a file for our models
+        """
+        # load actor and actor target
+        # since they are identical we can load from the same file
+        self.actor = load_model(actor_filename)
+        self.actor_target = load_model(actor_filename)
+
+        # load cirtic and critic target
+        # similarly load from the same file
+        self.critic = load_model(critic_filename)
+        self.critic_target = load_model(critic_filename)
