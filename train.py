@@ -21,6 +21,7 @@ def main():
     """
     # make the argument parser
     parser  = argparse.ArgumentParser()
+    parser.add_argument("-v", "--version", help="which agent version to use")
     parser.add_argument("-s", "--save", action='store_true', help="save model after training")
     parser.add_argument("-l", "--load", help="load a model to use")
     parser.add_argument("-n", "--numEpisodes", help="number of episodes to train (default 1000)",
@@ -33,72 +34,48 @@ def main():
 
     args = parser.parse_args()
     # define variables to initialize the agent
-    alpha = .001
+    alpha = .003
     gamma = .9
-    epsilon = .8
-    env = gym.make("RoboschoolAnt-v1")
+    epsilon = .9995
+    # env = gym.make("RoboschoolAnt-v1")
+    env = gym.make("Pendulum-v0")
+    # env = gym.make("MountainCarContinuous-v0")
 
-    if args.render:
-        monitor = gym.wrappers.monitor(env, "training")
+    env._max_episode_steps = 999
 
-    # now create the agent
-    agent = AntAgents.A2CAgent(alpha, gamma, epsilon, env)
+    # if we don't get a positive reward from training within the first n episodes
+    # we have likely fallen into a local minimum and need to restart
 
-    if args.load == None:
-        # if we are not loading a model train a new one
+    training = True
+    # to tell us whether or not we have gotten a positive reward
+    pos_reward = False
 
-        # number of episodes to train on
-        if args.numEpisodes == None:
-            training_episodes = 1000
+    while training:
+
+        if args.version==0:
+            agent = AntAgents.RandomAgent(env)
+
+        if args.version==2:
+            # now create the agent
+            agent = AntAgents.A2CAgent_v2(alpha, gamma, epsilon, env)
         else:
-            training_episodes = args.numEpisodes
+            agent = AntAgents.A2CAgent(alpha, gamma, epsilon, env)
 
-        print("Beginning training...\n")
+        if args.load == None:
+            # if we are not loading a model train a new one
 
-        # train the agent
-        for episode in range(training_episodes):
-            # initialize environment variables
-            state = env.reset()
-            # reshape the state array
-            state = state.reshape((1,env.observation_space.shape[0]))
-            sum_reward = 0
-            steps = 0
-            done = False
-            action = None
-            while not done:
-                # get an action from the exploration policy
-                action = agent.explore(state)
+            # number of episodes to train on
+            if args.numEpisodes == None:
+                training_episodes = 1000
+            else:
+                training_episodes = args.numEpisodes
 
-                # apply the action to the env
-                # we must reshape the action before stepping for compatability with
-                # rendering/recording the video
-                next_state, reward, done, info = monitor.step(action.reshape(1,-1)[0])
+            print("Beginning training...\n")
 
-                # reshape the action for input use in training
-                action = action.reshape((1, env.action_space.shape[0]))
-                # reshape the next_state array
-                next_state = next_state.reshape((1,env.observation_space.shape[0]))
-                # add this experience to memory for training use later
-                agent.remember(state, action, reward, next_state, done)
-                # update the current state
-                state = next_state
-                # update the steps and sum reward for bookkeeping purposes
-                steps +=1
-                sum_reward += reward
-
-            # print the statistics from the training episode
-            if (episode+1)%(training_episodes//100) == 0:
-                print("Results from episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
-                        episode+1, sum_reward, steps))
-
-            # after every 100 episodes, we want to render a test episode to save
-            # if the render flag is high
-            if args.render and (episode+1)%(training_episodes//100) == 0::
-                # monitor object will allow us to save the video
-                # create directory "training_2100" where 2100 is the episode number
-                monitor = gym.wrappers.monitor(env, "training_"+str(episode+1))
+            # train the agent
+            for episode in range(training_episodes):
                 # initialize environment variables
-                state = monitor.reset()
+                state = env.reset()
                 # reshape the state array
                 state = state.reshape((1,env.observation_space.shape[0]))
                 sum_reward = 0
@@ -106,31 +83,88 @@ def main():
                 done = False
                 action = None
                 while not done:
-                    # get an action from the greedy policy
-                    action = agent.getAction(state)
+                    # get an action from the exploration policy
+                    action = agent.explore(state)
+
                     # apply the action to the env
-                    # we must reshape action for rendering purposes
-                    next_state, reward, done, info = monitor.step(action.reshape(1,-1)[0])
+                    # we must reshape the action before stepping for compatability with
+                    # rendering/recording the video
+                    next_state, reward, done, info = env.step(action.reshape(1,-1)[0])
 
-                    # render to record the video
-                    env.render()
-
+                    # reshape the action for input use in training
+                    action = action.reshape((1, env.action_space.shape[0]))
                     # reshape the next_state array
                     next_state = next_state.reshape((1,env.observation_space.shape[0]))
-                    # update state
+                    # add this experience to memory for training use later
+                    agent.remember(state, action, reward, next_state, done)
+                    # update the current state
                     state = next_state
-
                     # update the steps and sum reward for bookkeeping purposes
                     steps +=1
                     sum_reward += reward
-                # print results from test episode
-                print("Results from test episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
-                        episode+1, sum_reward, steps))
+
+                # print the statistics from the training episode
+                if (episode+1)%(training_episodes//10) == 0:
+                    print("Results from episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
+                            episode+1, sum_reward, steps))
+                    # print("Epsilon={:1.4f}".format(agent.epsilon))
+                # if we've gotten positive reward record it
+                if sum_reward > -1000:
+                    print("positive reward")
+                    pos_reward = True
+                # if we havent gotten a positive reward in the first n episodes
+                # restart
+                if not pos_reward and episode>(training_episodes//10):
+                    # print("\nRestarting Training...\n")
+                    break
+
+                if sum_reward > 0:
+                    print("Results from episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
+                            episode+1, sum_reward, steps))
+
+                # after every 100 episodes, we want to render a test episode to save
+                # if the render flag is high
+                if args.render and (episode+1)%(training_episodes//10) == 0:
+                    # monitor object will allow us to save the video
+                    # create directory "training_2100" where 2100 is the episode number
+                    monitor = gym.wrappers.Monitor(env, "videos/training_"+str(episode+1), force=True)
+                    # initialize environment variables
+                    state = monitor.reset()
+                    # reshape the state array
+                    state = state.reshape((1,env.observation_space.shape[0]))
+                    sum_reward = 0
+                    steps = 0
+                    done = False
+                    action = None
+                    while not done:
+                        # get an action from the greedy policy
+                        action = agent.explore(state)
+                        # apply the action to the env
+                        # we must reshape action for rendering purposes
+                        next_state, reward, done, info = monitor.step(action.reshape(1,-1)[0])
+
+                        # reshape the next_state array
+                        next_state = next_state.reshape((1,env.observation_space.shape[0]))
+                        # update state
+                        state = next_state
+
+                        # update the steps and sum reward for bookkeeping purposes
+                        steps +=1
+                        sum_reward += reward
+
+                    monitor.close()
 
 
+                    # print results from test episode
+                    print("Results from test episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
+                            episode+1, sum_reward, steps))
 
-            # train the model after every iteration
-            agent.trainModel()
+
+                # train the model after every iteration
+                agent.trainModel()
+        if pos_reward:
+            break
+
 
     else:
         print("loading model...")
@@ -140,8 +174,10 @@ def main():
 
     print("testing model and rendering test...")
 
+    # create a new monitor
+    monitor = gym.wrappers.Monitor(env, "testing", force=True)
     # after training run a testing episode to see how we do
-    state = env.reset()
+    state = monitor.reset()
     # reshape the state array for passing into our model
     state = state.reshape((1,env.observation_space.shape[0]))
 
@@ -154,10 +190,10 @@ def main():
         action = agent.getAction(state)
         # apply the action to the env
         # we must reshape action for rendering purposes
-        next_state, reward, done, info = env.step(action.reshape(1,-1)[0])
+        next_state, reward, done, info = monitor.step(action.reshape(1,-1)[0])
 
-        # render so we can see the strategy learned by the agent
-        env.render()
+        # # render so we can see the strategy learned by the agent
+        # monitor.render()
 
         # reshape the next_state array
         next_state = next_state.reshape((1,env.observation_space.shape[0]))
@@ -171,6 +207,10 @@ def main():
     print("Results from test episode: Total Reward={:7.2f} over {:3d} steps".format(
             sum_reward, steps))
 
+    env.close()
+    monitor.close()
+
+    print(args.save)
     # if we are saving weights
     if args.save != None:
         # if we were given a path to use to save th weights

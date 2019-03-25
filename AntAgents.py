@@ -10,7 +10,7 @@ from collections import deque
 
 import tensorflow as tf
 from keras.models import Sequential, Model, load_model
-from keras.layers import Dense, Activation, Input
+from keras.layers import Dense, Activation, Input, GaussianNoise
 from keras.layers.merge import Add, Multiply
 from keras.optimizers import Adam
 from keras import backend
@@ -66,7 +66,7 @@ class RandomAgent(MLAgent):
 
     def getAction(self, state):
         # return random action sampled from action space
-        return self.env.action_space.sample()
+        return self.env.action_space.sample().reshape(-1,1)
 
 class DenseAgent(MLAgent):
     """
@@ -210,17 +210,16 @@ class A2CAgent(MLAgent):
         """
         apply the epsilon greedy exploration policy
         """
-        # decay our epsilon value
-        self.epsilon = self.epsilon*.995
-        # get the action based on our epsilon-greedy exploration policy
+        # # get the action based on our epsilon-greedy exploration policy
+        # rand = np.random.sample()
+        # if rand < self.epsilon:
+        #     # if less than epsilon return random action
+        #     return self.env.action_space.sample()
+        # else:
+        #     # else return greedy action
+        #     return self.getAction(state)
 
-        rand = np.random.sample()
-        if rand < self.epsilon:
-            # if less than epsilon return random action
-            return self.env.action_space.sample()
-        else:
-            # else return greedy action
-            return self.getAction(state)
+        return self.getAction(state)
 
     def getAction(self, state):
         """
@@ -306,6 +305,9 @@ class A2CAgent(MLAgent):
         # after training update the target networks to match actor and critic
         self.updateTarget()
 
+        # decay epsilon
+        self.epsilon *= .9995
+
     def trainActor(self, samples):
         """
         trains the actor network based on past experiences and the rewards recieved
@@ -314,7 +316,7 @@ class A2CAgent(MLAgent):
         """
         for sample in samples:
             state, action, reward, next_state, done = sample
-            predicted_action = self.actor.predict(state)
+            predicted_action = self.actor_target.predict(state)
 
             # get the total combined gradient
             a2c_grad = self.sess.run(self.critic_grad, feed_dict={
@@ -345,8 +347,14 @@ class A2CAgent(MLAgent):
                 target_reward = self.critic_target.predict([next_state,target_action])[0][0]
                 # dicount reward using discount rate
                 reward += self.gamma*target_reward
-            # fit the critic network to the experience and estimated future reward
-            self.critic.fit([state, action], [reward], verbose=0)
+
+                # get td error for training
+                td_error = reward - self.critic_target.predict([state, action])[0][0]
+                # just to streamline
+                reward = td_error
+
+                # fit the critic network to the experience and estimated future reward
+                self.critic.fit([state, action], [reward], verbose=0)
 
     def updateTarget(self):
         """
@@ -391,3 +399,143 @@ class A2CAgent(MLAgent):
         # similarly load from the same file
         self.critic = load_model(critic_filename)
         self.critic_target = load_model(critic_filename)
+
+
+class A2CAgent_v2(MLAgent):
+    """
+    our second attempt at writing a actor critic agent to solve
+    continuous action space problems
+    """
+    def __init__(self, alpha, gamma, epsilon, env):
+        super().__init__(alpha, gamma, epsilon, env)
+
+        self.sess = tf.Session() # session to use for training
+        backend.set_session(self.sess)
+        self.memory = deque(maxlen=2000) # array to hold experiences for training
+
+        # define required placeholders
+        self.actor_action = tf.placeholder(tf.float32, self.env.action_space.shape)
+        self.actor_state = tf.placeholder(tf.float32, self.env.observation_space.shape)
+        self.delta_placeholder = tf.placeholder(tf.float32)
+        self.target_placeholder = tf.placeholder(tf.float32)
+        self.critic_state = tf.placeholder(tf.float32, self.env.observation_space.shape)
+
+        # define our policy (actor) network
+        self.actor = self.buildActor(self.state_placeholder)
+        # define our value (critic) network
+        self.critic = self.buildCritic(self.state_placeholder)
+
+        # # define actor (policy) loss function
+        # self.loss_actor = -tf.log(norm_dist.prob(self.action_placeholder) + 1e-5) * self.delta_placeholder
+        # self.training_op_actor = tf.train.AdamOptimizer(
+        #     lr_actor, name='actor_optimizer').minimize(loss_actor)
+
+        self.sess.run(tf.global_variables_initializer())
+
+    def explore(self, state):
+        """
+        apply the epsilon greedy exploration policy
+        """
+        # # get the action based on our epsilon-greedy exploration policy
+        # rand = np.random.sample()
+        # if rand < self.epsilon:
+        #     # if less than epsilon return random action
+        #     return self.env.action_space.sample()
+        # else:
+        #     # else return greedy action
+        #     return self.getAction(state)
+
+        return self.getAction(state)
+
+    def getAction(self, state):
+        """
+        greedily returns an action from the actor model given the state
+        """
+        action  = self.actor.predict(state)
+        return action.reshape(-1,1)
+
+    def remember(self, state, action, reward, next_state, done):
+        """
+        Adds training experiences to our memory
+        """
+        # append the experience to memory
+        self.memory.append([state,action,reward,next_state,done])
+
+    def buildActor(self, state):
+        """
+        builds our actor network
+        returns
+        """
+        # define the network
+        h1 = Dense(40, activation="relu")(self.actor_state)
+        h2 = Dense(40, activation="relu")(h1)
+        mu = Dense(self.actor_action, None)(h2)
+        sigma = Dense(self.actor_action, activation="softplus")(h2)
+        # action is sampled about mu from a Gaussian of stddev sigma
+        # dist = Add(mu, GaussianNoise(sigma))
+        dist = tf.distributions.Normal(mu, sigma)
+        # clip action within range
+        out = tf.clip_by_value(dist.sample(1), -1, 1)
+
+        # define keras Model using the tensorflow layer multiplication we did above
+        model = Model(inputs=self.actor_state, outputs=out)
+        # initialize optimizer with learning rate
+        adam = Adam(lr=self.alpha)
+        # our loss function
+        loss_func = tf.log(dist.prob(self.actor_action) + 1e-5) * self.delta_placeholder
+        # compile model
+        model.compile(loss=loss_func, optimizer=adam)
+
+        return model
+
+    def buildCritic(self, state):
+        """
+        builds our critic network
+        returns
+        """
+
+        h1 = Dense(400, activation="relu")(self.critic_state)
+        h2 = Dense(400, activation="relu")(h1)
+        out = Dense(1, None)
+
+        # define keras Model using the tensorflow layer multiplication we did above
+        model = Model(inputs=self.critic_state, outputs=out)
+        # initialize optimizer with learning rate
+        adam = Adam(lr=self.alpha)
+        # compile model
+        model.compile(loss='mse', optimizer=adam)
+
+        return model
+
+    def trainModel():
+        """
+        trains the models based on past experiences from memory
+        """
+        # decay epsilon
+        self.epsilon *= .9995
+
+        batch_size = 32
+        if len(self.memory) < batch_size:
+            # if we dont have enough experiences to train
+            return
+
+        # sample a batch of experiences randomly from memory
+        samples = random.sample(self.memory, batch_size)
+
+        for sample in samples:
+            state, action, reward, next_state, done = sample
+
+            if not done:
+                target_reward = self.critic.predict(next_state)
+                #Set TD Target
+                #target = r + gamma * V(next_state)
+                target = reward + self.gamma * np.squeeze(target_reward)
+
+                # td_error = target - V(s)
+                #needed to feed delta_placeholder in actor training
+                td_error = target - np.squeeze(self.critic.predict(state))
+
+                #Update actor by minimizing loss (Actor training)
+                self.actor.fit([state], {self.actor_action:action, self.delta_placeholder:td_error}, verbose=0)
+                #Update critic by minimizinf loss  (Critic training)
+                self.critic.fit([state], [target], verbose=0)
