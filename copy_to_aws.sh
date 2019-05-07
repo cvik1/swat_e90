@@ -1,10 +1,12 @@
 #!/bin/bash
 
-# get the name and ip 
-aws = ""
+# get the name and ip
+aws="ec2-18-191-204-52.us-east-2.compute.amazonaws.com"
 
-scp -i ../cvik_aws_key1.pem ./AntAgents.py
+sudo scp -i "../cvik_aws_key1.pem" ./scripts/AntAgents.py ec2-user@$aws:e90/.
 
-scp -i ../cvik_aws_key1.pem ./train.py
+sudo scp -i "../cvik_aws_key1.pem" ./scripts/train.py ec2-user@$aws:e90/.
 
-scp -i ../cvik_aws_key1.pem instance_setup.sh
+sudo scp -i "../cvik_aws_key1.pem" ./scripts/ptrain.py ec2-user@$aws:e90/.
+
+sudo scp -i "../cvik_aws_key1.pem" instance_setup.sh ec2-user@$aws:e90/.
