@@ -720,7 +720,7 @@ class A2CAgent_v2_tf(MLAgent):
     This implementation is written in raw tensoflow
     """
     def __init__(self, alpha, gamma, epsilon, env):
-        super().__init__(alpha, gamma, epsilon, env)
+        super().__init__(alpha[0], gamma, epsilon, env)
         self.sess = tf.Session() # session to use for training
         backend.set_session(self.sess)
         self.memory = deque(maxlen=10000) # array to hold experiences for training
@@ -735,13 +735,13 @@ class A2CAgent_v2_tf(MLAgent):
         self.V = self.buildCritic()
 
         # define actor (policy) loss function
-        lr_actor = 0.00001
+        lr_actor = alpha[0]
         self.loss_actor = -tf.log(self.norm_dist.prob(self.action_placeholder) + 1e-5) * self.delta_placeholder
         self.training_op_actor = tf.train.AdamOptimizer(
             lr_actor, name='actor_optimizer').minimize(self.loss_actor)
 
         # define critic (state-value) loss function
-        lr_critic = 0.01
+        lr_critic = alpha[1]
         self.loss_critic = tf.reduce_mean(tf.squared_difference(
                                      tf.squeeze(self.V), self.target_placeholder))
         self.training_op_critic = tf.train.AdamOptimizer(

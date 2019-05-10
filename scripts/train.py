@@ -13,8 +13,8 @@ from datetime import datetime
 import gym
 # import monitor for saving video
 from gym.wrappers import Monitor
-import roboschool
-# import pybulletgym
+# import roboschool
+import pybulletgym
 
 
 # import agents
@@ -31,22 +31,22 @@ def main():
     parser.add_argument("-l", "--load", help="load a model to use")
     parser.add_argument("-n", "--numEpisodes", help="number of episodes to train (default 1000)",
                         type=int)
-    parser.add_argument("-a", "--actor", help="file where actor model is saved")
-    parser.add_argument("-c", "--critic", help="file where critic model is saved")
+    parser.add_argument("-a", "--actor", help="actor learning rate", type=np.float32)
+    parser.add_argument("-c", "--critic", help="critic learning rate", type=np.float32)
     parser.add_argument("-f", "--savefile", help="base path where to save models")
     parser.add_argument("-r", "--render", action='store_true', help="flag whether or not to render video")
     # parse the arguments
 
     args = parser.parse_args()
     # define variables to initialize the agent
-    alpha = .003
+    alpha = [args.actor, args.critic]
     gamma = .99
     epsilon = .9995
 
-    # env = gym.make('AntPyBulletEnv-v0')
+    env = gym.make('AntPyBulletEnv-v0')
     # env = gym.make("RoboschoolAnt-v1")
     # env = gym.make("Pendulum-v0")
-    env = gym.make("MountainCarContinuous-v0")
+    # env = gym.make("MountainCarContinuous-v0")
 
     agent = AntAgents.A2CAgent_v2_tf(alpha, gamma, epsilon, env)
     # agent = AntAgents.DenseAgent_v2(alpha, gamma, epsilon, env)
@@ -62,7 +62,7 @@ def main():
     else:
         training_episodes = args.numEpisodes
 
-    file = open("output.out", 'w')
+    # file = open("output.out", 'w')
     data = np.empty((training_episodes,2))
 
     print("Beginning training...\n")
@@ -73,10 +73,10 @@ def main():
 
     training = True
     # to tell us whether or not we have gotten a positive reward
-    pos_reward = False
+    pos_reward = True
 
     # to tell us when we're reached a new max reward
-    max_reward = 0
+    max_reward = -np.inf
 
     t1 = datetime.now()
     while training:
@@ -128,13 +128,11 @@ def main():
 
                 # write result to data
                 data[episode,:] = [sum_reward, steps]
-                # if (steps > (env._max_episode_steps/2)) :
-                #     print("Results from episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
-                #             episode+1, sum_reward, steps))
 
-                if (reward > .6*max_reward) :
+                if (sum_reward > (.6*max_reward)):
                     print("Results from episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
                             episode+1, sum_reward, steps))
+                    sys.stdout.flush()
 
                 # print the statistics from the training episode
                 if (episode+1)%(training_episodes//100) == 0:
@@ -145,7 +143,7 @@ def main():
                     sys.stdout.flush()
                     # print("Epsilon={:1.4f}".format(agent.epsilon))
                 # if we've gotten positive reward record it
-                if sum_reward > 0 and pos_reward == False:
+                if sum_reward > 800 and pos_reward == False:
                     # print("Results from episode {:6d}: Total Reward={:7.2f} over {:3d} steps".format(
                     #         episode+1, sum_reward, steps))
                     print("\n WE HAVE CLEARED THE HURDLE!!\n")
@@ -153,7 +151,7 @@ def main():
 
                 # if we havent gotten a positive reward in the first n episodes
                 # restart
-                if not pos_reward and episode>(20):
+                if not pos_reward and episode>(20000):
                     print("\nRestarting Training...")
                     sys.stdout.flush()
                     # set the weights to initial values and restart training
@@ -165,7 +163,7 @@ def main():
                     max_reward = sum_reward
                     # agent.saver.save(agent.sess, "models/model_r"+str(sum_reward)+".ckpt")
                     # # now save the array
-                    # np.savetxt('test_results/test_'+str(episode)+'_'+str(sum_reward)+'.csv', test_record, delimiter=',')
+                    np.savetxt('test_results/test_'+str(episode)+'_'+str(sum_reward)+'.csv', test_record, delimiter=',')
 
                 # # rather than rendering we will record the actions taken so we can
                 # # render later on
